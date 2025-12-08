@@ -2,38 +2,44 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # --- CONFIGURATION DE LA PAGE ---
-st.set_page_config(layout="wide", page_title="Simulateur Bilan Hydrique V18")
+st.set_page_config(layout="wide", page_title="Simulateur Bilan Hydrique V20")
 
-st.title("💧 Simulateur Bilan Hydrique V18 (Flexible)")
+st.title("💧 Simulateur Bilan Hydrique V20 (Neige + Moyennes)")
+st.caption("Version finale : Gestion de la fonte + Validation des moyennes annuelles.")
 tab1, tab2 = st.tabs(["🌊 Bilan Hydrique", "⛈️ Gestion des Crues (IDF)"])
 
+# ==========================================
+# ONGLET 1 : BILAN HYDRIQUE
+# ==========================================
 with tab1:
     st.markdown("---")
 
-    # ==========================================
     # 1. PARAMÈTRES (SIDEBAR)
-    # ==========================================
     with st.sidebar:
         st.header("1. Paramètres Site")
         
         # --- Données Physiques ---
         vol_min = st.number_input("Volume min. hiver (m³)", value=91712)
         seuil_debordement = st.number_input("Seuil Débordement (m³)", value=330000)
-        capacite_traitement = st.number_input("Traitement Max (m³/jour)", value=5000)
+        # ICI : Il faut mettre la capacité de pointe de la pompe, pas la moyenne
+        capacite_traitement = st.number_input("Capacité Pompe Max (m³/jour)", value=5000, help="Mettre la capacité max technique, pas la moyenne annuelle.")
         
         # --- Données Bassin ---
         surface_bv = st.number_input("Surface Bassin Versant (m²)", value=1700000)
         surface_plan_eau = st.number_input("Surface Plan d'Eau (m²)", value=20000)
-        coeff_ruissellement = st.slider("Coeff. Ruissellement", 0.0, 1.0, 0.85)
+        coeff_ruissellement = st.slider("Coeff. Ruissellement (Été)", 0.0, 1.0, 0.85)
         
-        # --- Flux d'eau (Entrées / Sorties) ---
+        # --- Paramètres Fonte ---
+        st.markdown("❄️ **Paramètres Neige**")
+        melt_rate = st.number_input("Coeff. Fonte (mm/°C/jour)", value=4.0, help="Vitesse de fonte par degré au dessus de zéro.")
+        
+        # --- Flux d'eau ---
         st.markdown("---")
-        autres_apports = st.number_input("Autre apport d'eau (m³/jour)", value=0, help="Ex: Pompage depuis une autre fosse")
-        
-        # MODIFICATION ICI : Changement du nom
-        autres_pertes = st.number_input("Autres pertes (m³/jour)", value=452, help="Ex: Concentrateur, Infiltrations, etc.")
+        autres_apports = st.number_input("Autre apport d'eau (m³/jour)", value=0)
+        autres_pertes = st.number_input("Autres pertes (m³/jour)", value=452)
         
         # --- Gestion Période Traitement ---
         st.markdown("---")
@@ -43,36 +49,34 @@ with tab1:
         }
         col1, col2 = st.columns(2)
         with col1:
-            debut_trait_nom = st.selectbox("Début Traitement", list(mois_options.keys()), index=3)
+            debut_trait_nom = st.selectbox("Début Traitement", list(mois_options.keys()), index=3) # Avril par défaut
         with col2:
-            fin_trait_nom = st.selectbox("Fin Traitement", list(mois_options.keys()), index=10)
+            fin_trait_nom = st.selectbox("Fin Traitement", list(mois_options.keys()), index=10) # Novembre par défaut
         
         debut_trait = mois_options[debut_trait_nom]
         fin_trait = mois_options[fin_trait_nom]
 
-        # ==========================================
-        # 2. MÉTÉO ÉDITABLE
-        # ==========================================
+        # 2. MÉTÉO ÉDITABLE (Pluie + Température)
         st.header("2. Météo & Scénarios")
         
-        # Facteurs globaux
-        majoration_pluie = st.slider("Ajustement Global Pluie (%)", -50, 50, 0, help="Augmente ou diminue la pluie de tous les mois")
+        majoration_pluie = st.slider("Ajustement Global Pluie (%)", -50, 50, 0)
         
-        # Données par défaut
+        # Données par défaut (Avec Température Moyenne ajoutée)
         default_data = {
             "Mois": ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"],
             "Pluie (mm)": [43.0, 30.2, 41.0, 46.7, 67.5, 86.4, 105.1, 85.8, 94.4, 75.0, 60.7, 46.2],
-            "Evap (mm/j)": [0.0, 0.0, 0.0, 1.0, 3.0, 4.5, 4.5, 3.5, 2.0, 1.0, 0.0, 0.0]
+            "Evap (mm/j)": [0.0, 0.0, 0.0, 1.0, 3.0, 4.5, 4.5, 3.5, 2.0, 1.0, 0.0, 0.0],
+            "Temp (°C)": [-10.0, -8.0, -2.0, 5.0, 12.0, 17.0, 20.0, 19.0, 14.0, 7.0, 0.5, -6.0]
         }
         df_meteo_base = pd.DataFrame(default_data)
         
-        with st.expander("📝 Modifier la météo mensuelle", expanded=False):
-            st.caption("Modifie les valeurs directement dans ce tableau :")
+        with st.expander("📝 Modifier Météo (Pluie & Temp)", expanded=False):
             edited_meteo = st.data_editor(
                 df_meteo_base,
                 column_config={
                     "Pluie (mm)": st.column_config.NumberColumn(format="%.1f"),
-                    "Evap (mm/j)": st.column_config.NumberColumn(format="%.1f")
+                    "Evap (mm/j)": st.column_config.NumberColumn(format="%.1f"),
+                    "Temp (°C)": st.column_config.NumberColumn(format="%.1f")
                 },
                 hide_index=True,
                 num_rows="fixed"
@@ -82,10 +86,9 @@ with tab1:
         facteur_pluie = 1 + (majoration_pluie / 100)
         MOYENNES_PLUIE = edited_meteo["Pluie (mm)"].values * facteur_pluie
         MOYENNES_EVAP = edited_meteo["Evap (mm/j)"].values
+        MOYENNES_TEMP = edited_meteo["Temp (°C)"].values
 
-    # ==========================================
-    # 3. MOTEUR DE SIMULATION
-    # ==========================================
+    # 3. MOTEUR DE SIMULATION (AVEC NEIGE)
     def run_simulation(years=60):
         start_date = pd.to_datetime("2024-01-01")
         dates = pd.date_range(start=start_date, periods=years*365, freq="D")
@@ -93,32 +96,65 @@ with tab1:
         
         months_idx = dates.month - 1
         
-        # Génération Stochastique
+        # Génération Stochastique des Précipitations
         daily_avg_rain = np.array([MOYENNES_PLUIE[m] / 30.0 for m in months_idx])
-        pluie_simulee_mm = np.random.exponential(scale=daily_avg_rain, size=n_days)
+        precip_brute_mm = np.random.exponential(scale=daily_avg_rain, size=n_days)
+        
+        # Génération des Températures (Avec un peu de variation aléatoire +/- 3°C)
+        temp_base = np.array([MOYENNES_TEMP[m] for m in months_idx])
+        temp_simulee = temp_base + np.random.normal(0, 3, n_days)
+        
         evap_simulee_mm = np.array([MOYENNES_EVAP[m] for m in months_idx])
         
+        # Tableaux de résultats
         vol_eau = np.zeros(n_days)
         vol_traite = np.zeros(n_days)
+        stock_neige = np.zeros(n_days) # Pour le graphique
+        
         current_vol = vol_min 
+        current_snowpack = 0.0 # Stock de neige au sol en mm d'eau
         overflow_count = 0
         
         for i in range(n_days):
             m = months_idx[i] + 1
+            temp_jour = temp_simulee[i]
+            precip_jour = precip_brute_mm[i]
             
-            # 1. Calcul des Flux
-            vol_pluie_bv = (pluie_simulee_mm[i] / 1000.0) * surface_bv * coeff_ruissellement
-            vol_pluie_directe = (pluie_simulee_mm[i] / 1000.0) * surface_plan_eau
+            # --- LOGIQUE NEIGE / FONTE ---
+            eau_liquide_disponible = 0.0
+            
+            if temp_jour <= 0:
+                # C'est de la NEIGE : On stocke, rien ne coule
+                current_snowpack += precip_jour
+                eau_liquide_disponible = 0.0
+            else:
+                # C'est de la PLUIE + FONTE
+                # 1. La pluie du jour est liquide
+                eau_liquide_disponible += precip_jour
+                
+                # 2. Fonte de la neige accumulée
+                # Formule degré-jour : Fonte = T * Rate
+                fonte_potentielle = temp_jour * melt_rate
+                fonte_reelle = min(current_snowpack, fonte_potentielle)
+                
+                current_snowpack -= fonte_reelle
+                eau_liquide_disponible += fonte_reelle
+            
+            # Sauvegarde pour graphique
+            stock_neige[i] = current_snowpack
+
+            # --- BILAN HYDRIQUE ---
+            vol_pluie_bv = (eau_liquide_disponible / 1000.0) * surface_bv * coeff_ruissellement
+            vol_pluie_directe = (eau_liquide_disponible / 1000.0) * surface_plan_eau
             vol_evap = (evap_simulee_mm[i] / 1000.0) * surface_plan_eau
             
-            # Sorties fixes (Renommé ici aussi)
+            # Sorties fixes
             vol_pertes = autres_pertes
             
-            # 2. Bilan AVANT traitement
-            # (Entrées + Autre Apport) - (Evap + Autres Pertes)
+            # Bilan AVANT traitement
             current_vol = current_vol + vol_pluie_bv + vol_pluie_directe + autres_apports - vol_evap - vol_pertes
             
-            # 3. Traitement
+            # Traitement
             traitement_jour = 0
             if debut_trait <= m <= fin_trait:
                 surplus = max(0, current_vol - vol_min)
@@ -132,36 +168,64 @@ with tab1:
             vol_eau[i] = current_vol
             vol_traite[i] = traitement_jour
             
-        return pd.DataFrame({"Date": dates, "Volume": vol_eau, "Traitement": vol_traite}), overflow_count
+        return pd.DataFrame({
+            "Date": dates, 
+            "Volume": vol_eau, 
+            "Traitement": vol_traite,
+            "Neige_Stock_mm": stock_neige
+        }), overflow_count
 
-    # ==========================================
     # 4. INTERFACE PRINCIPALE
-    # ==========================================
-
     col_btn1, col_btn2 = st.columns([1, 3])
     with col_btn1:
         launch = st.button("🚀 Lancer Simulation (60 ans)", type="primary")
 
     if launch:
-        with st.spinner('Calcul en cours...'):
-            df_res, jours_debord = run_simulation(years=60)
+        with st.spinner('Simulation accumulation neige & fonte en cours...'):
+            YEARS_SIM = 60
+            df_res, jours_debord = run_simulation(years=YEARS_SIM)
             
-            # KPIs
+            # --- CALCULS KPI AVEC MOYENNE ANNUELLE ---
             vol_max = df_res["Volume"].max()
             vol_total_traite = df_res["Traitement"].sum()
             
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Volume Max", f"{vol_max:,.0f} m³".replace(",", " "), delta_color="inverse")
-            k2.metric("Eau Traitée Total", f"{vol_total_traite/1e6:.2f} M m³")
-            k3.metric("Autres Apports (Total)", f"{(autres_apports*365*60)/1e6:.1f} M m³")
-            k4.metric("Jours Débordement", f"{jours_debord}", delta_color="inverse" if jours_debord > 0 else "normal")
+            # Calcul de la moyenne par an pour comparer avec Excel
+            moyenne_annuelle_traitee = vol_total_traite / YEARS_SIM
             
-            # Graphique
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df_res["Date"], y=df_res["Volume"], mode='lines', name='Volume', line=dict(color='#3498db')))
-            fig.add_hline(y=seuil_debordement, line_dash="dash", line_color="red", annotation_text="Débordement")
-            fig.add_hline(y=vol_min, line_dash="dot", line_color="orange", annotation_text="Min Hiver")
-            fig.update_layout(height=500, template="plotly_white", hovermode="x unified", title="Évolution du Volume")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Volume Max Bassin", f"{vol_max:,.0f} m³".replace(",", " "), delta_color="inverse")
+            
+            # C'est ici le chiffre important pour ta validation
+            k2.metric("Moyenne Annuelle Traitée", f"{moyenne_annuelle_traitee:,.0f} m³/an".replace(",", " "), 
+                      help="Compare ce chiffre avec la décharge annuelle de ton autre modèle.")
+            
+            k3.metric("Jours Débordement", f"{jours_debord}", delta_color="inverse" if jours_debord > 0 else "normal")
+            k4.metric("Total Traité (60 ans)", f"{vol_total_traite/1e6:.1f} M m³")
+            
+            # Graphique Double Axe (Volume + Neige)
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+            # Trace 1 : Volume d'eau (Axe Gauche)
+            fig.add_trace(
+                go.Scatter(x=df_res["Date"], y=df_res["Volume"], name="Volume Eau (m³)", line=dict(color='#3498db')),
+                secondary_y=False
+            )
+            
+            # Trace 2 : Stock Neige (Axe Droit)
+            fig.add_trace(
+                go.Scatter(x=df_res["Date"], y=df_res["Neige_Stock_mm"], name="Stock Neige (mm)", 
+                           line=dict(color='#bdc3c7', width=1), fill='tozeroy', opacity=0.5),
+                secondary_y=True
+            )
+
+            # Seuils
+            fig.add_hline(y=seuil_debordement, line_dash="dash", line_color="red", annotation_text="Débordement", secondary_y=False)
+            fig.add_hline(y=vol_min, line_dash="dot", line_color="orange", annotation_text="Min Hiver", secondary_y=False)
+            
+            fig.update_layout(height=550, title="Volume d'eau vs Accumulation de Neige", hovermode="x unified")
+            fig.update_yaxes(title_text="Volume Bassin (m³)", secondary_y=False)
+            fig.update_yaxes(title_text="Neige au sol (mm eau)", secondary_y=True, showgrid=False)
+            
             st.plotly_chart(fig, use_container_width=True)
 
     # Monte Carlo
@@ -188,19 +252,21 @@ with tab1:
         fig_mc.add_trace(go.Scatter(x=np.concatenate([dates_short, dates_short[::-1]]), y=np.concatenate([max_c, min_c[::-1]]), fill='toself', fillcolor='rgba(100,100,100,0.2)', line=dict(color='rgba(0,0,0,0)'), name='Zone 95%'))
         fig_mc.add_trace(go.Scatter(x=dates_short, y=avg_c, line=dict(color='blue'), name='Moyenne'))
         fig_mc.add_hline(y=seuil_debordement, line_color="red", line_dash="dash")
-        fig_mc.update_layout(title=f"Projection Risques (Scénario Pluie {majoration_pluie:+d}%)", height=500, template="plotly_white")
+        fig_mc.update_layout(title=f"Projection Risques (Avec Fonte des Neiges)", height=500, template="plotly_white")
         st.plotly_chart(fig_mc, use_container_width=True)
 
-    # --- CODE TIROIR 2 ---
+
+# ==========================================
+# ONGLET 2 : IDF & HYDRAULIQUE
+# ==========================================
 with tab2:
-   with tab2:
     st.header("⛈️ Calculs Hydrauliques Complets (Débit Pointe + Volume 24h)")
     st.markdown("Ce module calcule simultanément le **Débit de pointe** (selon la durée choisie) et le **Volume de gestion** (basé sur une pluie de 24h).")
 
     # --- 1. CONFIGURATION DE LA PLUIE (TABLE IDF) ---
     st.subheader("1. Table IDF (Intensités en mm/h)")
     
-    # J'ai ajouté la ligne 1440 minutes (24h) pour le calcul de volume
+    # Correction de l'erreur de syntaxe ici :
     data_idf = {
         "2 ans": [104, 76, 54, 42, 35, 22, 2.5],
         "5 ans": [140, 105, 75, 58, 48, 30, 3.5],
@@ -208,7 +274,7 @@ with tab2:
         "25 ans": [195, 150, 110, 85, 70, 45, 5.0],
         "100 ans": [235, 180, 130, 100, 85, 55, 6.5]
     }
-    # Index avec 1440 minutes (24h) à la fin
+    # Index 1440 = 24h
     df_idf_default = pd.DataFrame(data_idf, index=[5, 10, 15, 30, 60, 120, 1440])
     df_idf_default.index.name = "Durée (min)"
 
@@ -218,20 +284,14 @@ with tab2:
 
     col_sel1, col_sel2 = st.columns(2)
     with col_sel1:
-        choix_T = st.selectbox("Période de retour (T)", edited_idf.columns, index=2) # Par défaut 10 ans
+        choix_T = st.selectbox("Période de retour (T)", edited_idf.columns, index=2)
     with col_sel2:
-        # On exclut 1440 de la sélection par défaut pour le débit de pointe car c'est rare qu'on dimensionne un tuyau sur 24h
         options_duree = [d for d in edited_idf.index if d != 1440]
-        if not options_duree: options_duree = edited_idf.index # Sécurité si l'utilisateur efface tout
-        
+        if not options_duree: options_duree = edited_idf.index
         choix_Duree = st.selectbox("Durée pour Débit de Pointe (minutes)", options_duree, index=2)
 
-    # --- RÉCUPÉRATION DES INTENSITÉS ---
     try:
-        # 1. Intensité pour le Débit de Pointe (Durée choisie)
         i_pointe = edited_idf.loc[choix_Duree, choix_T]
-        
-        # 2. Intensité pour le Volume 24h (On cherche la ligne 1440)
         if 1440 in edited_idf.index:
             i_24h = edited_idf.loc[1440, choix_T]
             msg_vol = f"Basé sur l'intensité 24h : **{i_24h} mm/h**"
@@ -266,20 +326,14 @@ with tab2:
         resultats = edited_bassins.copy()
 
         # A. CALCUL DÉBIT DE POINTE (Q = CIA / 360)
-        # Utilise l'intensité de la durée courte (ex: 15 min)
         resultats["Q Pointe (m³/s)"] = (resultats["Surface (ha)"] * resultats["Coeff C"] * i_pointe) / 360
 
         # B. CALCUL VOLUME 24H
-        # Formule : Surface (m2) * C * Pluie_24h (m)
-        # Ha -> m2 : * 10 000
-        # mm/h -> m/24h : (i_24h * 24) / 1000
-        # Simplifié : Vol = Surface(ha) * C * i_24h * 240
         if i_24h > 0:
             resultats["Vol. 24h (m³)"] = resultats["Surface (ha)"] * resultats["Coeff C"] * i_24h * 240
         else:
             resultats["Vol. 24h (m³)"] = 0
 
-        # Affichage propre
         st.dataframe(
             resultats.style.format({
                 "Surface (ha)": "{:.2f}", 
@@ -290,15 +344,12 @@ with tab2:
             use_container_width=True
         )
 
-        # TOTAUX
         c1, c2, c3 = st.columns(3)
         c1.metric("Surface Totale", f"{resultats['Surface (ha)'].sum():.2f} ha")
         
-        # Somme des débits de pointe (Hypothèse conservative : pics simultanés)
         q_total = resultats["Q Pointe (m³/s)"].sum()
         c2.metric(f"🌊 Débit Pointe Total ({choix_Duree} min)", f"{q_total:.3f} m³/s")
         
-        # Somme des volumes 24h
         v_total = resultats["Vol. 24h (m³)"].sum()
         c3.metric(f"💧 Volume à gérer (24h)", f"{v_total:.0f} m³", delta_color="inverse")
 
